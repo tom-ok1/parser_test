@@ -1,38 +1,37 @@
-import fs from "fs";
-import path from "path";
+import { PDFDocumentProxy } from "pdfjs-dist";
+import fs from "fs/promises";
+import { createCanvas, destroyCanvas } from "./node.canvas.factory";
+import { readFileSync } from "fs";
 
-async function convertPdfToPng(
-  inputPath: string,
-  outputDir: string = "./output",
-  fileName: string = "page",
-  dpi: number = 300
-) {
-  const mupdf = await import("mupdf");
-  // Ensure output directory exists
-  if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir, { recursive: true });
+export const PDF_TO_PNG_OPTIONS_DEFAULTS = {
+  viewportScale: 1,
+  disableFontFace: true,
+  useSystemFonts: false,
+  enableXfa: true,
+  outputFileMask: "buffer",
+  strictPagesToProcess: false,
+  pdfFilePassword: undefined,
+};
+
+async function processPdfPage(url: string) {
+  const file = readFileSync(url).buffer;
+  const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const pdf = await getDocument({
+    data: new Uint8Array(file),
+  }).promise;
+  const page = await pdf.getPage(1);
+  const viewport = page.getViewport({ scale: 2.0 });
+  const { canvas, context } = createCanvas(viewport.width, viewport.height);
+
+  if (canvas === null || context === null) {
+    throw new Error("Failed to create canvas and context");
   }
 
-  console.log(`Loading PDF from: ${inputPath}`);
-
-  // Read the PDF file as ArrayBuffer
-  // const pdfData = new Uint8Array(fs.readFileSync(inputPath));
-
-  const doc = mupdf.PDFDocument.openDocument(
-    fs.readFileSync(inputPath),
-    "application/pdf"
-  );
-
-  const pageCount = doc.countPages();
-  console.log(`PDF has ${pageCount} pages`);
-
-  const page = doc.loadPage(0);
-  const pixMap = page.toPixmap(
-    mupdf.Matrix.identity,
-    mupdf.ColorSpace.DeviceBGR
-  );
-  const pngDataUrl = pixMap.asPNG();
-  fs.writeFileSync(path.join(outputDir, `${fileName}_1.png`), pngDataUrl);
+  await page.render({ canvasContext: context as any, viewport }).promise;
+  const pngBuffer = canvas.toBuffer("image/png");
+  page.cleanup();
+  destroyCanvas({ canvas, context });
+  await fs.writeFile("output.png", pngBuffer);
 }
 
-convertPdfToPng("./multi_pdf_50-1_6.pdf");
+processPdfPage("./multi_pdf_50-1_6.pdf");
